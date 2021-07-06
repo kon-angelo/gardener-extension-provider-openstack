@@ -15,10 +15,12 @@
 package validation_test
 
 import (
+	"fmt"
 	"strings"
 
 	api "github.com/gardener/gardener-extension-provider-openstack/pkg/apis/openstack"
 	. "github.com/gardener/gardener-extension-provider-openstack/pkg/apis/openstack/validation"
+	random "github.com/gardener/gardener/pkg/utils"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
@@ -138,6 +140,26 @@ var _ = Describe("InfrastructureConfig validation", func() {
 				"Field":  Equal("networks.workers"),
 				"Detail": Equal("must be valid canonical CIDR"),
 			}))
+		})
+
+		It("should forbid an invalid network id configuration", func() {
+			invalidID := "thisiswrong"
+			infrastructureConfig.Networks.ID = &invalidID
+
+			errorList := ValidateInfrastructureConfig(infrastructureConfig, &nodes, nilPath)
+
+			Expect(errorList).To(ConsistOfFields(Fields{
+				"Type":  Equal(field.ErrorTypeInvalid),
+				"Field": Equal("networks.id"),
+			}))
+		})
+
+		It("should allow an valid OpenStack UUID as network ID", func() {
+			infrastructureConfig.Networks.ID = generateOpenstackUUID()
+
+			errorList := ValidateInfrastructureConfig(infrastructureConfig, &nodes, nilPath)
+
+			Expect(errorList).To(BeEmpty())
 		})
 	})
 
@@ -528,3 +550,16 @@ var _ = Describe("InfrastructureConfig validation", func() {
 		)
 	})
 })
+
+func generateOpenstackUUID() *string {
+	const charSet = "abcdef0123456789"
+
+	first, _ := random.GenerateRandomStringFromCharset(8, charSet)
+	second, _ := random.GenerateRandomStringFromCharset(4, charSet)
+	third, _ := random.GenerateRandomStringFromCharset(4, charSet)
+	fourth, _ := random.GenerateRandomStringFromCharset(4, charSet)
+	fifth, _ := random.GenerateRandomStringFromCharset(12, charSet)
+	uuid := fmt.Sprintf("%s-%s-%s-%s-%s", first, second, third, fourth, fifth)
+
+	return &uuid
+}
