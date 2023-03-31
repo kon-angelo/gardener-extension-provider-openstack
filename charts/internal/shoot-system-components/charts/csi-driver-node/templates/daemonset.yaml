@@ -25,7 +25,7 @@ spec:
     spec:
       hostNetwork: true
       priorityClassName: system-node-critical
-      serviceAccount: csi-driver-node
+      serviceAccountName: csi-driver-node
       tolerations:
       - effect: NoSchedule
         operator: Exists

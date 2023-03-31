@@ -148,6 +148,8 @@ var (
 				Name: openstack.CSIControllerName,
 				Images: []string{
 					openstack.CSIDriverCinderImageName,
+					openstack.CSIDriverManila,
+					openstack.CSIDriverNFS,
 					openstack.CSIProvisionerImageName,
 					openstack.CSIAttacherImageName,
 					openstack.CSISnapshotterImageName,
@@ -159,7 +161,9 @@ var (
 				Objects: []*chart.Object{
 					// csi-driver-controller
 					{Type: &appsv1.Deployment{}, Name: openstack.CSIControllerName},
+					{Type: &appsv1.Deployment{}, Name: openstack.CSIManilaControllerName},
 					{Type: &autoscalingv1.VerticalPodAutoscaler{}, Name: openstack.CSIControllerName + "-vpa"},
+					{Type: &autoscalingv1.VerticalPodAutoscaler{}, Name: openstack.CSIManilaControllerName + "-vpa"},
 					{Type: &corev1.ConfigMap{}, Name: openstack.CSIControllerName + "-observability-config"},
 					// csi-snapshot-controller
 					{Type: &appsv1.Deployment{}, Name: openstack.CSISnapshotControllerName},
@@ -251,7 +255,6 @@ var (
 						Version: "v1",
 						Kind:    "VolumeSnapshotClass"}), Name: openstack.CSIManilaNFS},
 					// csi-driver-manila-controller
-					{Type: &appsv1.Deployment{}, Name: openstack.CSIManilaControllerName},
 					{Type: &corev1.ServiceAccount{}, Name: openstack.CSIManilaNodeName},
 					{Type: &rbacv1.ClusterRole{}, Name: openstack.UsernamePrefix + openstack.CSIManilaControllerName + "-psp"},
 					{Type: &rbacv1.ClusterRoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSIManilaControllerName + "-psp"},
@@ -946,12 +949,10 @@ func (vp *valuesProvider) getControlPlaneShootChartCSIManilaValues(
 			return nil, nil, err
 		}
 
-		csiDriverManilaValues["csimanila"] = map[string]interface{}{
-			"clusterID": cp.Namespace,
-		}
 		var authURL, domainName, projectName, username, password,
 			applicationCredentialID, applicationCredentialName, applicationCredentialSecret,
 			caCert, insecure, shareNetworkID string
+
 		if credentials != nil {
 			authURL = credentials.AuthURL
 			domainName = credentials.DomainName
@@ -969,6 +970,11 @@ func (vp *valuesProvider) getControlPlaneShootChartCSIManilaValues(
 		if infraStatus.Networks.ShareNetwork != nil {
 			shareNetworkID = infraStatus.Networks.ShareNetwork.ID
 		}
+
+		csiDriverManilaValues["csimanila"] = map[string]interface{}{
+			"clusterID": cp.Namespace,
+		}
+
 		csiDriverManilaValues["openstack"] = map[string]interface{}{
 			"availabilityZones":           vp.getAllWorkerPoolsZones(cluster),
 			"shareNetworkID":              shareNetworkID,

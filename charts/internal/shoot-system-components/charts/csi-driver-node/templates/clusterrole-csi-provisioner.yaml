@@ -5,6 +5,9 @@ metadata:
   name: {{ include "csi-driver-node.extensionsGroup" . }}:{{ include "csi-driver-node.name" . }}:csi-provisioner
 rules:
 - apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+- apiGroups: [""]
   resources: ["persistentvolumes"]
   verbs: ["get", "list", "watch", "create", "delete"]
 - apiGroups: [""]

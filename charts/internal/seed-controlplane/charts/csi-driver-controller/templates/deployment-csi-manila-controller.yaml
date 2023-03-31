@@ -1,0 +1,231 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-driver-manila-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: csi
+    role: controller
+    high-availability-config.resources.gardener.cloud/type: controller
+spec:
+  replicas: {{ .Values.manila.replicas }}
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: csi
+      role: csi-driver-manila-controller
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+{{- if .Values.podAnnotations }}
+      annotations:
+{{ toYaml .Values.podAnnotations | indent 8 }}
+{{- end }}
+      labels:
+        app: csi
+        role: csi-driver-manila-controller
+        networking.gardener.cloud/to-dns: allowed
+        networking.gardener.cloud/to-public-networks: allowed
+        networking.gardener.cloud/to-private-networks: allowed
+        networking.resources.gardener.cloud/to-kube-apiserver-tcp-443: allowed
+    spec:
+      priorityClassName: gardener-system-300
+      containers:
+        - name: openstack-nfs-driver
+          image: {{ index $.Values.images "csi-driver-manila" }}
+          args:
+            - /bin/manila-csi-plugin
+            - --nodeid=dummy
+            - --endpoint=/csi/csi.sock
+            - --drivername=$(DRIVER_NAME)
+            - --v=3
+            - --share-protocol-selector=NFS
+            - --fwdendpoint=/csi-fwd/csi.sock
+            - --cluster-id={{ $.Release.Namespace }}
+            {{- if $.Values.manila.topologyAwarenessEnabled }}
+            - --with-topology
+            {{- end }}
+            {{- if $.Values.manila.runtimeConfig.enabled }}
+            - --runtime-config-file=/runtimeconfig/runtimeconfig.json
+            {{- end }}
+          env:
+            - name: DRIVER_NAME
+              value: nfs.manila.csi.openstack.org
+{{- if $.Values.manila.resources.driverController }}
+          resources:
+{{ toYaml $.Values.manila.resources.driverController | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - name: nfs-plugin-dir
+              mountPath: /csi
+            - name: nfs-fwd-plugin-dir
+              mountPath: /csi-fwd
+            {{- if $.Values.manila.runtimeConfig.enabled }}
+            - name: nfs-runtime-config-dir
+              mountPath: /runtimeconfig
+              readOnly: true
+            {{- end }}
+
+        - name: openstack-nfs-nfs-driver
+          image: {{ index .Values.images "csi-driver-nfs" }}
+          args:
+            - --v=5
+            - --nodeid=dummy
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - --drivername=nfs.csi.k8s.io
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+          ports:
+            - containerPort: {{ .Values.manila.nfsLivenessProbe.healthPort }}
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+{{- if .Values.manila.resources }}
+          resources:
+{{ toYaml .Values.manila.resources | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - mountPath: /csi
+              name: nfs-fwd-plugin-dir
+        - name: openstack-nfs-provisioner
+          imagePullPolicy: IfNotPresent
+          image: {{ index $.Values.images "csi-provisioner" }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubeconfig=/var/run/secrets/gardener.cloud/shoot/generic-kubeconfig/kubeconfig
+            {{- if $.Values.manila.topologyAwarenessEnabled }}
+            - --feature-gates=Topology=true
+            {{- end }}
+            - --volume-name-prefix=pv-{{ $.Release.Namespace }}
+            - --leader-election
+            - --leader-election-namespace=kube-system
+            - --timeout={{ $.Values.timeout }}
+            - v=5
+{{- if $.Values.resources.provisioner }}
+          resources:
+{{ toYaml $.Values.resources.provisioner | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
+              name: kubeconfig-csi-provisioner
+              readOnly: true
+            - name: nfs-plugin-dir
+              mountPath: /csi
+
+        - name: openstack-nfs-snapshotter
+          image: {{ index $.Values.images "csi-snapshotter" }}
+          args:
+            - --csi-address=/csi-fwd/csi.sock
+            - --leader-election
+            - --leader-election-namespace=kube-system
+            - --timeout={{ $.Values.timeout }}
+            - --snapshot-name-prefix={{ $.Release.Namespace }}
+            - --kubeconfig=/var/run/secrets/gardener.cloud/shoot/generic-kubeconfig/kubeconfig
+{{- if $.Values.resources.snapshotter }}
+          resources:
+{{ toYaml $.Values.resources.snapshotter | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
+              name: kubeconfig-csi-snapshotter
+              readOnly: true
+            - name: nfs-plugin-dir
+              mountPath: /csi
+
+        - name: openstack-nfs-resizer
+          image: {{ index $.Values.images "csi-resizer" }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --leader-election
+            - --leader-election-namespace=kube-system
+            - --timeout={{ $.Values.timeout }}
+            - --handle-volume-inuse-error=false
+            - --v=3
+            - --kubeconfig=/var/run/secrets/gardener.cloud/shoot/generic-kubeconfig/kubeconfig
+{{- if $.Values.resources.resizer }}
+          resources:
+{{ toYaml $.Values.resources.resizer | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
+              name: kubeconfig-csi-resizer
+              readOnly: true
+            - name: nfs-plugin-dir
+              mountPath: /csi
+
+      volumes:
+      - name: nfs-plugin-dir
+        emptyDir: {}
+      - name: nfs-fwd-plugin-dir
+        emptyDir: {}
+{{- if $.Values.manila.runtimeConfig.enabled }}
+      - name: nfs-runtime-config-dir
+        configMap:
+          name: manila-csi-runtimeconf-cm
+{{- end }}
+      - name: kubeconfig-csi-provisioner
+        projected:
+          defaultMode: 420
+          sources:
+            - secret:
+                items:
+                  - key: kubeconfig
+                    path: kubeconfig
+                name: {{ .Values.global.genericTokenKubeconfigSecretName }}
+                optional: false
+            - secret:
+                items:
+                  - key: token
+                    path: token
+                name: shoot-access-csi-provisioner
+                optional: false
+      - name: kubeconfig-csi-snapshotter
+        projected:
+          defaultMode: 420
+          sources:
+            - secret:
+                items:
+                  - key: kubeconfig
+                    path: kubeconfig
+                name: {{ .Values.global.genericTokenKubeconfigSecretName }}
+                optional: false
+            - secret:
+                items:
+                  - key: token
+                    path: token
+                name: shoot-access-csi-snapshotter
+                optional: false
+      - name: kubeconfig-csi-resizer
+        projected:
+          defaultMode: 420
+          sources:
+            - secret:
+                items:
+                  - key: kubeconfig
+                    path: kubeconfig
+                name: {{ .Values.global.genericTokenKubeconfigSecretName }}
+                optional: false
+            - secret:
+                items:
+                  - key: token
+                    path: token
+                name: shoot-access-csi-resizer
+                optional: false
+      - name: manila-csi-plugin
+        secret:
+          secretName: manila-csi-nfs
+          items:
+            - key: ca.crt
+              path: ca.crt
