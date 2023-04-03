@@ -35,8 +35,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        {{- range .Values.shareProtocols }}
-        - name: {{ .protocolSelector | lower }}-nodeplugin
+        - name: manila-driver
           securityContext:
             privileged: true
             capabilities:
@@ -56,20 +55,20 @@ spec:
             - --endpoint=/csi/csi.sock
             - --drivername=$(DRIVER_NAME)
             - --share-protocol-selector=$(MANILA_SHARE_PROTO)
-            - --fwdendpoint=/csi-fwd/{{ .fwdNodePluginEndpoint.sockFile }}
+            - --fwdendpoint=/csi-fwd/csi.sock
             - --cluster-id={{ $.Values.csimanila.clusterID }}
             - --v=2
           env:
             - name: DRIVER_NAME
-              value: {{ .protocolSelector | lower }}.manila.csi.openstack.org
+              value: nfs.manila.csi.openstack.org
             - name: NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: MANILA_SHARE_PROTO
-              value: "{{ .protocolSelector }}"
+              value: "nfs"
           ports:
-            - containerPort: {{ .node.livenessProbe.healthPort }}
+            - containerPort: 24913
               name: healthz
               protocol: TCP
           livenessProbe:
@@ -81,12 +80,12 @@ spec:
             timeoutSeconds: 10
             periodSeconds: 30
           volumeMounts:
-            - name: {{ .protocolSelector | lower }}-plugin-dir
+            - name: nfs-plugin-dir
               mountPath: /csi
-            - name: {{ .protocolSelector | lower }}-fwd-plugin-dir
+            - name: nfs-fwd-plugin-dir
               mountPath: /csi-fwd
             {{- if $.Values.csimanila.runtimeConfig.enabled }}
-            - name: {{ .protocolSelector | lower }}-runtime-config-dir
+            - name: nfs-runtime-config-dir
               mountPath: /runtimeconfig
               readOnly: true
             {{- end }}
@@ -95,13 +94,41 @@ spec:
               mountPath: /var/run/csi-manila
               readOnly: true
             {{- end }}
-
 {{- if $.Values.resources.driverNode }}
           resources:
 {{ toYaml $.Values.resources.driverNode | indent 12 }}
 {{- end }}
+        - name: the-actual-driver-nfs-node
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          image: {{ index $.Values.images "csi-driver-nfs" }}
+          args :
+            - "--v=2"
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--drivername=nfs.csi.k8s.io"
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+{{- if .Values.resources.driverNode }}
+          resources:
+{{ toYaml .Values.resources.driverNode | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - name: nfs-fwd-plugin-dir
+              mountPath: /csi
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: "Bidirectional"
 
-        - name: {{ .protocolSelector | lower }}-registrar
+        - name: nfs-registrar
           image: {{ index $.Values.images "csi-node-driver-registrar" }}
           args:
             - --csi-address=/csi/csi.sock
@@ -109,7 +136,7 @@ spec:
             - -v=5
           env:
             - name: DRIVER_REG_SOCK_PATH
-              value: /var/lib/kubelet/plugins/{{ .protocolSelector | lower }}.manila.csi.openstack.org/csi.sock
+              value: /var/lib/kubelet/plugins/nfs.manila.csi.openstack.org/csi.sock
             - name: KUBE_NODE_NAME
               valueFrom:
                 fieldRef:
@@ -119,44 +146,43 @@ spec:
 {{ toYaml $.Values.resources.nodeDriverRegistrar | indent 12 }}
 {{- end }}
           volumeMounts:
-            - name: {{ .protocolSelector | lower }}-plugin-dir
+            - name: nfs-plugin-dir
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
 
-        - name: {{ .protocolSelector | lower }}-liveness-probe
+        - name: nfs-liveness-probe
           image: {{ index $.Values.images "csi-liveness-probe" }}
           args:
             - --csi-address=/csi/csi.sock
-            - --health-port={{ .node.livenessProbe.healthPort }}
+            - --health-port=24913
 {{- if $.Values.resources.livenessProbe }}
           resources:
 {{ toYaml $.Values.resources.livenessProbe | indent 12 }}
 {{- end }}
           volumeMounts:
-            - name: {{ .protocolSelector | lower }}-plugin-dir
+            - name: nfs-plugin-dir
               mountPath: /csi
-        {{- end }}
 
       volumes:
         - name: registration-dir
           hostPath:
             path: /var/lib/kubelet/plugins_registry
             type: Directory
-        {{- range .Values.shareProtocols }}
-        - name: {{ .protocolSelector | lower }}-plugin-dir
+        - name: pods-mount-dir
           hostPath:
-            path: /var/lib/kubelet/plugins/{{ .protocolSelector | lower }}.manila.csi.openstack.org
-            type: DirectoryOrCreate
-        - name: {{ .protocolSelector | lower }}-fwd-plugin-dir
+            path: /var/lib/kubelet/pods
+            type: Directory
+        - name: nfs-plugin-dir
           hostPath:
-            path: {{ .fwdNodePluginEndpoint.dir }}
+            path: /var/lib/kubelet/plugins/nfs.manila.csi.openstack.org
             type: DirectoryOrCreate
+        - name: nfs-fwd-plugin-dir
+          emptyDir: {}
         {{- if $.Values.csimanila.runtimeConfig.enabled }}
-        - name: {{ .protocolSelector | lower }}-runtime-config-dir
+        - name: nfs-runtime-config-dir
           configMap:
             name: manila-csi-runtimeconf-cm
-        {{- end }}
         {{- end }}
         {{- if .Values.openstack.caCert }}
         - name: manila-csi-plugin

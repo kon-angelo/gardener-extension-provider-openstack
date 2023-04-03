@@ -240,6 +240,7 @@ var (
 				Name: openstack.CSIDriverManila,
 				Images: []string{
 					openstack.CSIDriverManilaImageName,
+					openstack.CSIDriverNFSImageName,
 					openstack.CSINodeDriverRegistrarImageName,
 					openstack.CSILivenessProbeImageName,
 					openstack.CSIProvisionerImageName,
@@ -271,33 +272,6 @@ var (
 					{Type: &rbacv1.ClusterRoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSIManilaNodeName},
 					{Type: &policyv1beta1.PodSecurityPolicy{}, Name: strings.Replace(openstack.UsernamePrefix+openstack.CSIManilaNodeName, ":", ".", -1)},
 					{Type: extensionscontroller.GetVerticalPodAutoscalerObject(), Name: openstack.CSIManilaNodeName},
-				},
-			},
-			{
-				Name: openstack.CSIDriverNFS,
-				Images: []string{
-					openstack.CSIDriverNFSImageName,
-					openstack.CSINodeDriverRegistrarImageName,
-					openstack.CSILivenessProbeImageName,
-					openstack.CSIProvisionerImageName,
-				},
-				Objects: []*chart.Object{
-					{Type: &storagev1.CSIDriver{}, Name: openstack.CSIStorageProvisionerNFS},
-					// csi-driver-nfs-controller
-					{Type: &appsv1.Deployment{}, Name: openstack.CSINFSControllerName},
-					{Type: &corev1.ServiceAccount{}, Name: openstack.CSINFSControllerName},
-					{Type: &rbacv1.ClusterRole{}, Name: openstack.UsernamePrefix + openstack.CSINFSControllerName + "-psp"},
-					{Type: &rbacv1.ClusterRoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSINFSControllerName + "-psp"},
-					{Type: &rbacv1.ClusterRoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSINFSControllerName + "-provisioner"},
-					{Type: &rbacv1.RoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSINFSControllerName + "-provisioner"},
-					{Type: &policyv1beta1.PodSecurityPolicy{}, Name: strings.Replace(openstack.UsernamePrefix+openstack.CSINFSControllerName, ":", ".", -1)},
-					{Type: extensionscontroller.GetVerticalPodAutoscalerObject(), Name: openstack.CSINFSControllerName},
-					// csi-driver-nfs-node
-					{Type: &appsv1.DaemonSet{}, Name: openstack.CSINFSNodeName},
-					{Type: &corev1.ServiceAccount{}, Name: openstack.CSINFSNodeName},
-					{Type: &rbacv1.ClusterRole{}, Name: openstack.UsernamePrefix + openstack.CSINFSNodeName},
-					{Type: &rbacv1.ClusterRoleBinding{}, Name: openstack.UsernamePrefix + openstack.CSINFSNodeName},
-					{Type: &policyv1beta1.PodSecurityPolicy{}, Name: strings.Replace(openstack.UsernamePrefix+openstack.CSINFSNodeName, ":", ".", -1)},
 				},
 			},
 		},
@@ -866,7 +840,7 @@ func (vp *valuesProvider) getControlPlaneShootChartValues(
 		csiNodeDriverValues["userAgentHeaders"] = userAgentHeader
 	}
 
-	csiDriverManilaValues, csiDriverNFSValues, err := vp.getControlPlaneShootChartCSIManilaValues(cpConfig, cp, cluster, credentials)
+	csiDriverManilaValues, err := vp.getControlPlaneShootChartCSIManilaValues(cpConfig, cp, cluster, credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -875,7 +849,6 @@ func (vp *valuesProvider) getControlPlaneShootChartValues(
 		openstack.CloudControllerManagerName: map[string]interface{}{"enabled": true},
 		openstack.CSINodeName:                csiNodeDriverValues,
 		openstack.CSIDriverManila:            csiDriverManilaValues,
-		openstack.CSIDriverNFS:               csiDriverNFSValues,
 	}, nil
 }
 
@@ -924,29 +897,24 @@ func (vp *valuesProvider) getControlPlaneShootChartCSIManilaValues(
 	cp *extensionsv1alpha1.ControlPlane,
 	cluster *extensionscontroller.Cluster,
 	credentials *openstack.Credentials,
-) (map[string]interface{}, map[string]interface{}, error) {
+) (map[string]interface{}, error) {
 
 	csiManilaEnabled := cpConfig.Storage != nil && cpConfig.Storage.CSIManila != nil && cpConfig.Storage.CSIManila.Enabled
 	csiDriverManilaValues := map[string]interface{}{
-		"enabled": csiManilaEnabled,
-	}
-	csiDriverNFSValues := map[string]interface{}{
 		"enabled": csiManilaEnabled,
 	}
 
 	if csiManilaEnabled {
 		csiDriverManilaValues["vpaEnabled"] = gardencorev1beta1helper.ShootWantsVerticalPodAutoscaler(cluster.Shoot)
 		csiDriverManilaValues["pspDisabled"] = gardencorev1beta1helper.IsPSPDisabled(cluster.Shoot)
-		csiDriverNFSValues["vpaEnabled"] = gardencorev1beta1helper.ShootWantsVerticalPodAutoscaler(cluster.Shoot)
-		csiDriverNFSValues["pspDisabled"] = gardencorev1beta1helper.IsPSPDisabled(cluster.Shoot)
 
 		infraConfig, err := helper.InfrastructureConfigFromRawExtension(cluster.Shoot.Spec.Provider.InfrastructureConfig)
 		if err != nil {
-			return nil, nil, fmt.Errorf("could not decode infrastructure config of controlplane '%s': %w", kutil.ObjectName(cp), err)
+			return nil, fmt.Errorf("could not decode infrastructure config of controlplane '%s': %w", kutil.ObjectName(cp), err)
 		}
 		infraStatus, err := vp.getInfrastructureStatus(cp)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		var authURL, domainName, projectName, username, password,
@@ -993,7 +961,7 @@ func (vp *valuesProvider) getControlPlaneShootChartCSIManilaValues(
 		}
 	}
 
-	return csiDriverManilaValues, csiDriverNFSValues, nil
+	return csiDriverManilaValues, nil
 }
 
 func (vp *valuesProvider) getAllWorkerPoolsZones(cluster *extensionscontroller.Cluster) []string {

@@ -132,7 +132,7 @@ manila:
 
   # Enabled Manila share protocols
   livenessProbe:
-    healthPort: 11950
+    healthPort:
   nfsLivenessProbe:
     healthPort: 11951
 
