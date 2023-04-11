@@ -83,11 +83,28 @@ func ValidateInfrastructureConfig(infra *api.InfrastructureConfig, nodesCIDR *st
 func ValidateInfrastructureConfigUpdate(oldConfig, newConfig *api.InfrastructureConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
+	allErrs = append(allErrs, ValidateNetworksUpdate(&oldConfig.Networks, &newConfig.Networks, fldPath.Child("networks"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.Networks, oldConfig.Networks, fldPath.Child("networks"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.FloatingPoolName, oldConfig.FloatingPoolName, fldPath.Child("floatingPoolName"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.FloatingPoolSubnetName, oldConfig.FloatingPoolSubnetName, fldPath.Child("floatingPoolSubnetName"))...)
 
 	return allErrs
+}
+
+func ValidateNetworksUpdate(old, new *api.Networks, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.ID, old.ID, fldPath.Child("id"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.Router, old.Router, fldPath.Child("router"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.Worker, old.Worker, fldPath.Child("worker"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.Workers, old.Workers, fldPath.Child("workers"))...)
+
+	if old.ShareNetwork != nil && old.ShareNetwork.Enabled {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.ShareNetwork, old.ShareNetwork, fldPath.Child("shareNetwork"))...)
+	}
+
+	return allErrs
+
 }
 
 // ValidateInfrastructureConfigAgainstCloudProfile validates the given InfrastructureConfig against constraints in the given CloudProfile.
