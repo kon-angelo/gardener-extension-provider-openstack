@@ -117,7 +117,7 @@ var _ = BeforeSuite(func() {
 	// enable manager logs
 	logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
 
-	log = logf.Log.WithName("bastion-test")
+	log = logf.Log.WithName("infrastructure-test")
 
 	DeferCleanup(func() {
 		defer func() {

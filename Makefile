@@ -41,6 +41,9 @@ FLOATING_POOL_NAME := .kube-secrets/openstack/floating_pool_name.secret
 PASSWORD           := .kube-secrets/openstack/password.secret
 TENANT_NAME        := .kube-secrets/openstack/tenant_name.secret
 USER_NAME          := .kube-secrets/openstack/user_name.secret
+IMAGE_REF          := g_c2_m4
+FLAVOR_REF         := gardenlinux-318.9
+
 
 #########################################
 # Tools                                 #
@@ -178,4 +181,6 @@ integration-test-bastion:
 		--password='$(shell cat $(PASSWORD))' \
 		--tenant-name='$(shell cat $(TENANT_NAME))' \
 		--user-name='$(shell cat $(USER_NAME))' \
-		--region='$(shell cat $(REGION))'
+		--region='$(shell cat $(REGION))' \
+		--flavorRef='$(FLAVOR_REF)' \
+		--imageRef='$(IMAGE_REF)'

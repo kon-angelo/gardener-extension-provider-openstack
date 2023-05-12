@@ -43,6 +43,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
@@ -52,6 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gardener/gardener-extension-provider-openstack/pkg/apis/config"
 	openstackinstall "github.com/gardener/gardener-extension-provider-openstack/pkg/apis/openstack/install"
 	openstackv1alpha1 "github.com/gardener/gardener-extension-provider-openstack/pkg/apis/openstack/v1alpha1"
 	bastionctrl "github.com/gardener/gardener-extension-provider-openstack/pkg/controller/bastion"
@@ -67,7 +69,27 @@ var (
 	region           = flag.String("region", "", "Openstack region")
 	tenantName       = flag.String("tenant-name", "", "Tenant name for openstack")
 	userName         = flag.String("user-name", "", "User name for openstack")
+	flavorRef        = flag.String("flavor-ref", "", "User name for openstack")
+	imageRef         = flag.String("image-ref", "", "User name for openstack")
 	userDataConst    = "IyEvYmluL2Jhc2ggLWV1CmlkIGdhcmRlbmVyIHx8IHVzZXJhZGQgZ2FyZGVuZXIgLW1VCm1rZGlyIC1wIC9ob21lL2dhcmRlbmVyLy5zc2gKZWNobyAic3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBREFRQUJBQUFCQVFDazYyeDZrN2orc0lkWG9TN25ITzRrRmM3R0wzU0E2UmtMNEt4VmE5MUQ5RmxhcmtoRzFpeU85WGNNQzZqYnh4SzN3aWt0M3kwVTBkR2h0cFl6Vjh3YmV3Z3RLMWJBWnl1QXJMaUhqbnJnTFVTRDBQazNvWGh6RkpKN0MvRkxNY0tJZFN5bG4vMENKVkVscENIZlU5Y3dqQlVUeHdVQ2pnVXRSYjdZWHN6N1Y5dllIVkdJKzRLaURCd3JzOWtVaTc3QWMyRHQ1UzBJcit5dGN4b0p0bU5tMWgxTjNnNzdlbU8rWXhtWEo4MzFXOThoVFVTeFljTjNXRkhZejR5MWhrRDB2WHE1R1ZXUUtUQ3NzRE1wcnJtN0FjQTBCcVRsQ0xWdWl3dXVmTEJLWGhuRHZRUEQrQ2Jhbk03bUZXRXdLV0xXelZHME45Z1VVMXE1T3hhMzhvODUgbWVAbWFjIiA+IC9ob21lL2dhcmRlbmVyLy5zc2gvYXV0aG9yaXplZF9rZXlzCmNob3duIGdhcmRlbmVyOmdhcmRlbmVyIC9ob21lL2dhcmRlbmVyLy5zc2gvYXV0aG9yaXplZF9rZXlzCmVjaG8gImdhcmRlbmVyIEFMTD0oQUxMKSBOT1BBU1NXRDpBTEwiID4vZXRjL3N1ZG9lcnMuZC85OS1nYXJkZW5lci11c2VyCg=="
+)
+
+var (
+	ctx = context.Background()
+	log logr.Logger
+
+	extensionscluster *extensionsv1alpha1.Cluster
+	controllercluster *controller.Cluster
+	options           *bastionctrl.Options
+	bastion           *extensionsv1alpha1.Bastion
+	secret            *corev1.Secret
+
+	testEnv   *envtest.Environment
+	mgrCancel context.CancelFunc
+	c         client.Client
+
+	openstackClient    *OpenstackClient
+	internalChartsPath string
 )
 
 func validateFlags() {
@@ -94,82 +116,88 @@ func validateFlags() {
 	}
 }
 
-var _ = Describe("Bastion tests", func() {
-	var (
-		ctx = context.Background()
-		log logr.Logger
+var _ = BeforeSuite(func() {
+	flag.Parse()
+	validateFlags()
 
-		extensionscluster *extensionsv1alpha1.Cluster
-		controllercluster *controller.Cluster
-		options           *bastionctrl.Options
-		bastion           *extensionsv1alpha1.Bastion
-		secret            *corev1.Secret
+	repoRoot := filepath.Join("..", "..", "..")
+	openstack.InternalChartsPath = filepath.Join(repoRoot, openstack.InternalChartsPath)
 
-		testEnv   *envtest.Environment
-		mgrCancel context.CancelFunc
-		c         client.Client
+	// enable manager logs
+	logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
 
-		openstackClient    *OpenstackClient
-		internalChartsPath string
-	)
+	log = logf.Log.WithName("bastion-test")
 
-	randString, err := randomString()
+	By("starting test environment")
+	testEnv = &envtest.Environment{
+		UseExistingCluster: pointer.Bool(true),
+		CRDInstallOptions: envtest.CRDInstallOptions{
+			Paths: []string{
+				filepath.Join(repoRoot, "example", "20-crd-extensions.gardener.cloud_clusters.yaml"),
+				filepath.Join(repoRoot, "example", "20-crd-extensions.gardener.cloud_bastions.yaml"),
+			},
+		},
+	}
+
+	log = logf.Log.WithName("bastion-test")
+	cfg, err := testEnv.Start()
+	Expect(err).NotTo(HaveOccurred())
+	Expect(cfg).NotTo(BeNil())
+
+	By("setup manager")
+	mgr, err := manager.New(cfg, manager.Options{
+		MetricsBindAddress: "0",
+	})
 	Expect(err).NotTo(HaveOccurred())
 
-	// bastion name prefix
-	name := fmt.Sprintf("openstack-it-bastion-%s", randString)
+	Expect(extensionsv1alpha1.AddToScheme(mgr.GetScheme())).To(Succeed())
+	Expect(openstackinstall.AddToScheme(mgr.GetScheme())).To(Succeed())
 
-	BeforeSuite(func() {
-		flag.Parse()
-		validateFlags()
+	Expect(bastionctrl.AddToManagerWithOptions(mgr, bastionctrl.AddOptions{
+		BastionConfig: config.BastionConfig{
+			ImageRef:  *imageRef,
+			FlavorRef: *flavorRef,
+		},
+	})).To(Succeed())
 
-		internalChartsPath = openstack.InternalChartsPath
-		repoRoot := filepath.Join("..", "..", "..")
-		openstack.InternalChartsPath = filepath.Join(repoRoot, openstack.InternalChartsPath)
+	var mgrContext context.Context
+	mgrContext, mgrCancel = context.WithCancel(ctx)
 
-		// enable manager logs
-		logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
-
-		log = logf.Log.WithName("bastion-test")
-
-		By("starting test environment")
-		testEnv = &envtest.Environment{
-			UseExistingCluster: pointer.Bool(true),
-			CRDInstallOptions: envtest.CRDInstallOptions{
-				Paths: []string{
-					filepath.Join(repoRoot, "example", "20-crd-extensions.gardener.cloud_clusters.yaml"),
-					filepath.Join(repoRoot, "example", "20-crd-extensions.gardener.cloud_bastions.yaml"),
-				},
-			},
-		}
-
-		cfg, err := testEnv.Start()
+	By("start manager")
+	go func() {
+		err := mgr.Start(mgrContext)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg).NotTo(BeNil())
+	}()
 
-		By("setup manager")
-		mgr, err := manager.New(cfg, manager.Options{
-			MetricsBindAddress: "0",
-		})
-		Expect(err).NotTo(HaveOccurred())
+	c = mgr.GetClient()
+	Expect(c).NotTo(BeNil())
+})
 
-		Expect(extensionsv1alpha1.AddToScheme(mgr.GetScheme())).To(Succeed())
-		Expect(openstackinstall.AddToScheme(mgr.GetScheme())).To(Succeed())
+var _ = AfterSuite(func() {
+	defer func() {
+		By("stopping manager")
+		mgrCancel()
+	}()
 
-		Expect(bastionctrl.AddToManager(mgr)).To(Succeed())
+	By("running cleanup actions")
+	framework.RunCleanupActions()
 
-		var mgrContext context.Context
-		mgrContext, mgrCancel = context.WithCancel(ctx)
+	By("stopping test environment")
+	Expect(testEnv.Stop()).To(Succeed())
 
-		By("start manager")
-		go func() {
-			err := mgr.Start(mgrContext)
-			Expect(err).NotTo(HaveOccurred())
-		}()
+	openstack.InternalChartsPath = internalChartsPath
+})
 
-		c = mgr.GetClient()
-		Expect(c).NotTo(BeNil())
+var _ = Describe("Bastion tests", func() {
+	var (
+		name string
+	)
 
+	BeforeEach(func() {
+		// bastion name prefix
+		randString, err := randomString()
+		Expect(err).To(BeNil())
+		name = fmt.Sprintf("openstack-it-bastion-%s", randString)
 		extensionscluster, controllercluster = createClusters(name)
 		bastion, options = createBastion(controllercluster, name)
 
@@ -190,21 +218,6 @@ var _ = Describe("Bastion tests", func() {
 
 		openstackClient, err = NewOpenstackClient(*authURL, *domainName, *password, *region, *tenantName, *userName)
 		Expect(err).NotTo(HaveOccurred())
-	})
-
-	AfterSuite(func() {
-		defer func() {
-			By("stopping manager")
-			mgrCancel()
-		}()
-
-		By("running cleanup actions")
-		framework.RunCleanupActions()
-
-		By("stopping test environment")
-		Expect(testEnv.Stop()).To(Succeed())
-
-		openstack.InternalChartsPath = internalChartsPath
 	})
 
 	It("should successfully create and delete", func() {
@@ -443,6 +456,8 @@ func createClusters(name string) (*extensionsv1alpha1.Cluster, *controller.Clust
 
 	shoot := createShoot(infrastructureConfigJSON)
 	shootJSON, _ := json.Marshal(shoot)
+	seed := createSeed()
+	seedJSON, _ := json.Marshal(seed)
 
 	cloudProfile := createCloudProfile()
 	cloudProfileJSON, _ := json.Marshal(cloudProfile)
@@ -459,6 +474,9 @@ func createClusters(name string) (*extensionsv1alpha1.Cluster, *controller.Clust
 			Shoot: runtime.RawExtension{
 				Object: shoot,
 				Raw:    shootJSON,
+			},
+			Seed: runtime.RawExtension{
+				Raw: seedJSON,
 			},
 		},
 	}
@@ -498,6 +516,15 @@ func createShoot(infrastructureConfig []byte) *gardencorev1beta1.Shoot {
 	}
 }
 
+func createSeed() *gardencorev1beta1.Seed {
+	return &gardencorev1beta1.Seed{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: gardencorev1beta1.SchemeGroupVersion.String(),
+			Kind:       "Seed",
+		},
+	}
+}
+
 func createCloudProfile() *gardencorev1beta1.CloudProfile {
 	cloudProfile := &gardencorev1beta1.CloudProfile{
 		Spec: gardencorev1beta1.CloudProfileSpec{},
@@ -516,6 +543,13 @@ func createBastion(cluster *controller.Cluster, name string) (*extensionsv1alpha
 				Type: openstack.Type,
 			},
 			UserData: []byte(userDataConst),
+			Ingress: []extensionsv1alpha1.BastionIngressPolicy{
+				{
+					IPBlock: networkingv1.IPBlock{
+						CIDR: "0.0.0.0/0",
+					},
+				},
+			},
 		},
 	}
 
