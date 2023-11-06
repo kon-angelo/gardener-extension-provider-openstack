@@ -44,4 +44,5 @@ ignoreVolumeAZ: false
 
 monitorDelay: 20s
 monitorMaxRetries: 2
+monitorMaxRetriesDown: 3
 monitorTimeout: 30s

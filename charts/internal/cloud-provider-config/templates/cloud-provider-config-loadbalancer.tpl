@@ -4,6 +4,7 @@ create-monitor=true
 monitor-delay="{{ .Values.monitorDelay }}"
 monitor-timeout="{{ .Values.monitorTimeout }}"
 monitor-max-retries={{ .Values.monitorMaxRetries }}
+monitor-max-retries-down={{ .Values.monitorMaxRetriesDown }}
 lb-version="v2"
 lb-provider="{{ .Values.lbProvider }}"
 floating-network-id="{{ .Values.floatingNetworkID }}"
