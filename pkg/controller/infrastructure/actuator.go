@@ -16,6 +16,7 @@ package infrastructure
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gardener/gardener/extensions/pkg/controller/infrastructure"
 	"github.com/gardener/gardener/extensions/pkg/terraformer"
@@ -85,5 +86,8 @@ func (a *actuator) updateProviderStatus(
 	patch := client.MergeFrom(infra.DeepCopy())
 	infra.Status.ProviderStatus = &runtime.RawExtension{Object: status}
 	infra.Status.State = &runtime.RawExtension{Raw: stateBytes}
+	infra.Status.EgressIPs = []string{
+		fmt.Sprintf("%s/32", status.Networks.Router.IP),
+	}
 	return a.client.Status().Patch(ctx, infra, patch)
 }
