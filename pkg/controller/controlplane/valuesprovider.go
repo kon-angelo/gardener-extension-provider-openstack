@@ -860,6 +860,12 @@ func (vp *valuesProvider) getControlPlaneShootChartValues(
 	}
 	caBundle = string(caSecret.Data[secretutils.DataKeyCertificateBundle])
 
+	cloudProfileConfig := api.CloudProfileConfig{}
+	if cluster.CloudProfile.Spec.ProviderConfig != nil {
+		if _, _, err := vp.decoder.Decode(cluster.CloudProfile.Spec.ProviderConfig.Raw, nil, &cloudProfileConfig); err != nil {
+			return nil, fmt.Errorf("could not decode providerConfig of cloudprofile'%s': %w", kutil.ObjectName(cluster.Shoot), err)
+		}
+	}
 	csiNodeDriverValues = map[string]interface{}{
 		"enabled":    true,
 		"vpaEnabled": gardencorev1beta1helper.ShootWantsVerticalPodAutoscaler(cluster.Shoot),
@@ -871,7 +877,10 @@ func (vp *valuesProvider) getControlPlaneShootChartValues(
 			"url":      "https://" + openstack.CSISnapshotValidationName + "." + cp.Namespace + "/volumesnapshot",
 			"caBundle": caBundle,
 		},
-		"pspDisabled": gardencorev1beta1helper.IsPSPDisabled(cluster.Shoot),
+		"pspDisabled":                gardencorev1beta1helper.IsPSPDisabled(cluster.Shoot),
+		"rescanBlockStorageOnResize": cloudProfileConfig.RescanBlockStorageOnResize != nil && *cloudProfileConfig.RescanBlockStorageOnResize,
+		"ignoreVolumeAZ":             cloudProfileConfig.IgnoreVolumeAZ != nil && *cloudProfileConfig.IgnoreVolumeAZ,
+		"nodeVolumeAttachLimit":      cloudProfileConfig.NodeVolumeAttachLimit,
 	}
 
 	// add keystone CA bundle

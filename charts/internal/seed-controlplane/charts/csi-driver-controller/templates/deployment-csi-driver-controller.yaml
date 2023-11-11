@@ -45,6 +45,7 @@ spec:
         - /bin/cinder-csi-plugin
         - --nodeid=dummy
         - --endpoint=$(CSI_ENDPOINT)
+        - --mode=controller
         - --cloud-config=/etc/kubernetes/cloudprovider/cloudprovider.conf
         - --cluster={{ .Release.Namespace }}
         {{- range $userAgentHeader := .Values.userAgentHeaders }}

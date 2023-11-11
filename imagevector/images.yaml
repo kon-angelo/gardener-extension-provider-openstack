@@ -154,9 +154,8 @@ images:
         integrity_requirement: 'high'
         availability_requirement: 'low'
 - name: csi-driver-cinder
-  sourceRepository: github.com/kubernetes/cloud-provider-openstack
-  repository: registry.k8s.io/provider-os/cinder-csi-plugin
-  tag: "v1.27.3"
+  repository:  konstantinosangelopoulos777/cinder-csi-plugin
+  tag: v0.0.0-mode
   targetVersion: "1.27.x"
   labels:
     - name: 'gardener.cloud/cve-categorisation'
